@@ -5,4 +5,5 @@ __pycache__/
 .pytest_cache/
 chroma_db/*
 !chroma_db/.gitkeep
+chroma_db.backup-*/
 .DS_Store
