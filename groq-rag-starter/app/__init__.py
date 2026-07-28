@@ -1,0 +1,1 @@
+"""Beginner Groq RAG application."""

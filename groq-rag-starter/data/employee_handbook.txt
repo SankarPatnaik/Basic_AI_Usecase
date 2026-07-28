@@ -1,0 +1,13 @@
+EMPLOYEE HANDBOOK - SAMPLE DATA
+
+Annual Leave
+Every full-time employee receives 24 days of annual leave per calendar year. Planned leave should normally be requested at least five working days in advance. A maximum of 10 unused annual-leave days may be carried into the next calendar year.
+
+Sick Leave
+An employee who is unwell should notify the manager as early as possible. Advance approval is not required for unexpected illness. A medical certificate may be requested when the absence lasts more than three consecutive working days.
+
+Remote Work
+Employees working remotely must be available during agreed business hours. Company information must only be accessed through approved devices and approved secure connections.
+
+Information Security
+Passwords must not be shared. Confidential documents must not be uploaded to unapproved public services. Suspected security incidents must be reported immediately to the service desk or information-security team.
