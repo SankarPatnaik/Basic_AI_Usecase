@@ -10,6 +10,8 @@ app = FastAPI(title="Beginner Groq RAG API", version="1.0.0")
 class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=4, ge=1, le=8)
+    provider: str = Field(default="groq", pattern="^(groq|local_qwen)$")
+    model: str | None = Field(default=None, max_length=100)
 
 
 @app.get("/health")
@@ -20,7 +22,12 @@ def health() -> dict:
 @app.post("/ask")
 def ask(request: QuestionRequest) -> dict:
     try:
-        result = answer_question(request.question, request.top_k)
+        result = answer_question(
+            request.question,
+            request.top_k,
+            provider=request.provider,
+            model=request.model,
+        )
         return {"answer": result.answer, "sources": result.sources}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

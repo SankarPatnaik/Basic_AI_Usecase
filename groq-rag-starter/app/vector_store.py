@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 from app.config import settings
-from app.documents import SUPPORTED_EXTENSIONS, chunk_text, read_document
+from app.documents import SUPPORTED_EXTENSIONS, document_chunks
 
 
 @lru_cache(maxsize=1)
@@ -24,32 +25,41 @@ def collection():
     )
 
 
-def ingest_folder(data_folder: str = "data", reset: bool = False) -> int:
+def _clear_collection(store) -> None:
+    existing = store.get(include=[])
+    if existing.get("ids"):
+        store.delete(ids=existing["ids"])
+
+
+def ingest_paths(paths: Iterable[Path], reset: bool = False) -> int:
+    selected_paths = sorted(Path(path) for path in paths)
+    selected_paths = [
+        path
+        for path in selected_paths
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
+    if not selected_paths:
+        raise FileNotFoundError("No TXT, PDF or DOCX files were selected for ingestion.")
+
     store = collection()
     if reset:
-        existing = store.get(include=[])
-        if existing.get("ids"):
-            store.delete(ids=existing["ids"])
-
-    paths = sorted(
-        p for p in Path(data_folder).iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    if not paths:
-        raise FileNotFoundError(f"No TXT, PDF or DOCX files found in {data_folder!r}")
+        _clear_collection(store)
 
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict[str, Any]] = []
 
-    for path in paths:
-        for page, text in read_document(path):
-            for chunk_number, chunk in enumerate(chunk_text(text)):
-                ids.append(f"{path.name}:p{page}:c{chunk_number}")
-                documents.append(chunk)
-                metadatas.append(
-                    {"source": path.name, "page": page, "chunk": chunk_number}
-                )
+    for path in selected_paths:
+        for row in document_chunks(path):
+            ids.append(f"{path.as_posix()}:p{row['page']}:c{row['chunk']}")
+            documents.append(row["text"])
+            metadatas.append(
+                {
+                    "source": row["source"],
+                    "page": row["page"],
+                    "chunk": row["chunk"],
+                }
+            )
 
     if not documents:
         raise ValueError("Documents were found, but no readable text was extracted.")
@@ -59,6 +69,19 @@ def ingest_folder(data_folder: str = "data", reset: bool = False) -> int:
     ).tolist()
     store.upsert(ids=ids, documents=documents, embeddings=vectors, metadatas=metadatas)
     return len(documents)
+
+
+def ingest_folder(data_folder: str = "data", reset: bool = False) -> int:
+    folder = Path(data_folder)
+    if not folder.exists():
+        raise FileNotFoundError(f"No TXT, PDF or DOCX files found in {data_folder!r}")
+    paths = sorted(
+        p for p in folder.rglob("*")
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    if not paths:
+        raise FileNotFoundError(f"No TXT, PDF or DOCX files found in {data_folder!r}")
+    return ingest_paths(paths, reset=reset)
 
 
 def search(question: str, top_k: int | None = None) -> list[dict[str, Any]]:

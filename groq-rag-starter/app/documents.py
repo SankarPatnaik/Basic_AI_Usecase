@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Any
 
 from docx import Document
 from pypdf import PdfReader
@@ -53,4 +55,35 @@ def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str
         if end >= len(cleaned):
             break
         start = end - overlap
+    return chunks
+
+
+def safe_filename(filename: str) -> str:
+    """Return a simple filename that is safe to save under data/uploads."""
+    path = Path(filename).name
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(path).stem).strip("_")
+    suffix = re.sub(r"[^A-Za-z0-9.]+", "", Path(path).suffix)
+    return f"{stem or 'uploaded_document'}{suffix}"
+
+
+def document_chunks(
+    path: Path,
+    chunk_size: int = 900,
+    overlap: int = 150,
+) -> list[dict[str, Any]]:
+    """Read a document and return chunk records suitable for preview or storage."""
+    chunks: list[dict[str, Any]] = []
+    for page, text in read_document(path):
+        for chunk_number, chunk in enumerate(
+            chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        ):
+            chunks.append(
+                {
+                    "source": path.name,
+                    "page": page,
+                    "chunk": chunk_number,
+                    "text": chunk,
+                    "characters": len(chunk),
+                }
+            )
     return chunks

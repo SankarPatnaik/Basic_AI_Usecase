@@ -7,12 +7,14 @@ A beginner-friendly, self-learning project that teaches how to build a complete 
 You will build an application that:
 
 1. Reads TXT, PDF and DOCX files.
-2. Splits long text into smaller chunks.
-3. Converts chunks into numerical embeddings on your own computer.
-4. Stores the embeddings in a local ChromaDB vector database.
-5. Finds document chunks related to a user's question.
-6. Sends only the retrieved evidence and question to a Groq-hosted language model.
-7. Displays the generated answer together with the retrieved sources.
+2. Uploads PDFs from the Streamlit app.
+3. Splits long text into smaller chunks.
+4. Converts chunks into numerical embeddings on your own computer.
+5. Stores the embeddings in a local ChromaDB vector database.
+6. Finds document chunks related to a user's question.
+7. Sends the same retrieved evidence to either Groq or a local Qwen model through Ollama.
+8. Displays the generated answer together with the retrieved sources.
+9. Demonstrates a separate interactive Groq chat loop without RAG.
 
 ```text
 Documents -> Text chunks -> Local embeddings -> ChromaDB
@@ -24,7 +26,7 @@ Question -> Query embedding -> Similarity search
                        Relevant document chunks
                                   |
                                   v
-                         Groq LLM + prompt
+                    Groq or local Qwen + prompt
                                   |
                                   v
                          Answer with sources
@@ -191,6 +193,9 @@ Your `.env` should look like this:
 ```env
 GROQ_API_KEY=gsk_your_real_key_here
 GROQ_MODEL=llama-3.1-8b-instant
+LOCAL_QWEN_MODEL=qwen2.5:3b
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_TIMEOUT_SECONDS=120
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 CHROMA_PATH=chroma_db
 COLLECTION_NAME=student_rag_documents
@@ -221,7 +226,7 @@ data/
 
 ingest.py          Loads documents into the vector database
 cli.py             Terminal chatbot
-streamlit_app.py   Web interface
+streamlit_app.py   Web interface with upload, chunk preview, RAG and chat
 api.py             FastAPI REST service
 tests/             Beginner automated tests
 ```
@@ -304,6 +309,49 @@ http://localhost:8501
 
 Use the sidebar button to rebuild the vector database after changing documents.
 
+The Streamlit app now has four teaching tabs:
+
+| Tab | What students learn |
+|---|---|
+| Ask PDF RAG | Ask grounded questions over stored document chunks |
+| Chunking demo | See how a PDF, TXT or DOCX file becomes chunks |
+| Groq chat | Build a normal chat loop without retrieval |
+| Teaching guide | Review the classroom steps and setup commands |
+
+## Upload a PDF in Streamlit
+
+1. Open the Streamlit app.
+2. Use the sidebar **Upload PDF files** control.
+3. Click **Add uploaded PDFs**.
+4. Open **Chunking demo** to inspect the chunks.
+5. Open **Ask PDF RAG** and ask a question whose answer is in the PDF.
+
+Uploaded PDFs are saved in `data/uploads/` and their vectors are stored in ChromaDB.
+
+## Compare Groq with local Qwen
+
+The sidebar has a **Generation model** section.
+
+- Choose **Groq API** to send retrieved context to Groq.
+- Choose **Local Qwen through Ollama** to send the same retrieved context to a local Qwen model.
+
+This is useful in class because retrieval, chunking and embeddings stay the same. Only the generation model changes.
+
+To prepare local Qwen:
+
+```bash
+# Install Ollama from https://ollama.com first.
+ollama pull qwen2.5:3b
+ollama serve
+```
+
+Then set or confirm these values in `.env`:
+
+```env
+LOCAL_QWEN_MODEL=qwen2.5:3b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
 ---
 
 # Lesson 9 - Run the REST API
@@ -323,7 +371,19 @@ Use `POST /ask` with:
 ```json
 {
   "question": "How many annual leave days are available?",
-  "top_k": 4
+  "top_k": 4,
+  "provider": "groq"
+}
+```
+
+To use local Qwen through Ollama:
+
+```json
+{
+  "question": "Summarize the uploaded policy.",
+  "top_k": 4,
+  "provider": "local_qwen",
+  "model": "qwen2.5:3b"
 }
 ```
 
@@ -337,16 +397,23 @@ http://127.0.0.1:8000/health
 
 # Lesson 10 - Add your own documents
 
-1. Stop the application.
-2. Add `.txt`, `.pdf` or `.docx` files to `data/`.
-3. Rebuild the vector database:
+Option A, from Streamlit:
+
+1. Upload one or more PDFs in the sidebar.
+2. Click **Add uploaded PDFs**.
+3. Ask questions in the **Ask PDF RAG** tab.
+
+Option B, from the terminal:
+
+1. Add `.txt`, `.pdf` or `.docx` files to `data/` or `data/uploads/`.
+2. Rebuild the vector database:
 
 ```bash
 python ingest.py --reset
 ```
 
-4. Restart Streamlit or the API.
-5. Ask questions whose answers are present in the documents.
+3. Restart Streamlit or the API.
+4. Ask questions whose answers are present in the documents.
 
 ## Important PDF limitation
 
@@ -355,6 +422,53 @@ python ingest.py --reset
 ## Data privacy warning
 
 Although embeddings are created locally, retrieved document text is sent to Groq in the generation prompt. Do not use confidential, regulated or personal data unless you have authorization and have reviewed the provider's current data-handling terms.
+
+If **Local Qwen through Ollama** is selected, the retrieved document text stays on your machine for generation too. You still need to review your local device, logs and security requirements before using sensitive data.
+
+---
+
+# Lesson 10A - Create an interactive Groq chat system
+
+The **Groq chat** tab shows a normal chat application. It is intentionally separate from RAG so students can compare the two patterns.
+
+## Chat architecture
+
+```text
+User message -> Chat history -> Groq chat completions API -> Assistant reply
+                     ^                                      |
+                     |                                      v
+                     +----------- Streamlit state <---------+
+```
+
+## Steps
+
+1. Create a `Groq` client using the API key from `.env`.
+2. Create `st.session_state.groq_chat_history` to store messages.
+3. Add each student message as `{"role": "user", "content": message}`.
+4. Send the whole history to `client.chat.completions.create(...)`.
+5. Add the returned answer as `{"role": "assistant", "content": reply}`.
+6. Render each message with `st.chat_message(...)`.
+
+Minimal example:
+
+```python
+from groq import Groq
+
+client = Groq(api_key=settings.groq_api_key)
+response = client.chat.completions.create(
+    model=settings.groq_model,
+    messages=st.session_state.groq_chat_history,
+)
+reply = response.choices[0].message.content
+```
+
+## Chat vs RAG
+
+| Pattern | Uses your documents? | Best classroom question |
+|---|---:|---|
+| Plain Groq chat | No | "Can the model explain a concept?" |
+| RAG with Groq | Yes | "Can the model answer from this PDF?" |
+| RAG with local Qwen | Yes | "Can we answer from this PDF without a hosted LLM?" |
 
 ---
 
@@ -438,13 +552,13 @@ The words differ, but semantic search may still retrieve the relevant chunk.
 
 Add a `department` field to stored metadata and display it in the UI.
 
-## Exercise 5: Add a file upload screen
+## Exercise 5: Add DOCX upload support
 
-Extend Streamlit so a user can upload a supported document and rebuild the database.
+Extend the Streamlit uploader so it accepts `.docx` files in addition to PDFs.
 
-## Exercise 6: Add chat history
+## Exercise 6: Export chat history
 
-Use `st.session_state` to preserve previous questions and answers.
+Add a download button that exports the Groq chat history as JSON.
 
 ## Exercise 7: Evaluate the RAG system
 
@@ -556,7 +670,11 @@ git status
 
 ## Why local embeddings?
 
-Groq is used for language-model inference, while Sentence Transformers creates embeddings locally. This makes the learning project inexpensive and clearly separates retrieval from generation.
+Sentence Transformers creates embeddings locally. This makes the learning project inexpensive and clearly separates retrieval from generation.
+
+## Why support both Groq and local Qwen?
+
+Groq demonstrates a hosted, fast LLM API. Local Qwen through Ollama demonstrates on-device generation. Both options use the same retrieved chunks, so students can see that RAG is an architecture pattern rather than a single model or provider.
 
 ## Why ChromaDB?
 
