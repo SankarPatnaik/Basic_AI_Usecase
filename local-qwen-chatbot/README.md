@@ -2,10 +2,21 @@
 
 A simple local chatbot project for students. It runs on your computer using Ollama and the `qwen2.5:3b` model.
 
-This project is not RAG. It is a plain chatbot:
+It has two features:
+
+1. A general local chatbot.
+2. An internet-assisted trip planner that reads travel web pages and asks Qwen to build a vacation plan.
+
+The basic chatbot flow is:
 
 ```text
 User message -> Streamlit chat history -> Ollama local API -> qwen2.5:3b -> Reply
+```
+
+The trip planner flow is:
+
+```text
+Trip details -> Search or pasted URLs -> Web page text -> Qwen prompt -> Itinerary
 ```
 
 Use this when you want a private local helper for planning, writing, studying, coding, or general task support.
@@ -19,6 +30,7 @@ Use this when you want a private local helper for planning, writing, studying, c
 3. How a system prompt changes assistant behavior.
 4. How Streamlit can become a local web app.
 5. How a Python app calls Ollama through HTTP.
+6. How a chatbot can use live web page text as context.
 
 ---
 
@@ -29,6 +41,8 @@ app.py            Streamlit local chatbot UI
 cli.py            Terminal chatbot
 chatbot.py        System prompts, modes and transcript export
 ollama_client.py  Small HTTP client for Ollama
+web_research.py   Lightweight web search and page text extraction
+trip_planner.py   Travel-planning prompts and source context
 requirements.txt  Python packages
 .env.example      Local model settings
 tests/            Beginner-friendly tests
@@ -38,8 +52,10 @@ Read the files in this order:
 
 1. `chatbot.py`
 2. `ollama_client.py`
-3. `app.py`
-4. `cli.py`
+3. `web_research.py`
+4. `trip_planner.py`
+5. `app.py`
+6. `cli.py`
 
 ---
 
@@ -141,7 +157,7 @@ Open:
 http://127.0.0.1:8503
 ```
 
-The app runs locally on your machine.
+The app runs locally on your machine. Open the **Assistant chat** tab for normal chat, or the **Trip planner** tab for vacation planning with web research.
 
 ---
 
@@ -152,6 +168,29 @@ python cli.py
 ```
 
 Type `exit` to stop.
+
+---
+
+## Use the trip planner
+
+1. Open the Streamlit app.
+2. Select the **Trip planner** tab.
+3. Enter destination, dates, starting city, budget, pace and interests.
+4. Keep **Search the web automatically** enabled, or paste specific travel websites to crawl.
+5. Click **Research and plan trip**.
+6. Review the itinerary and the **Web sources used** section.
+7. Ask follow-up questions such as:
+
+```text
+Make this itinerary cheaper.
+Add vegetarian restaurants.
+Reduce the number of hotel changes.
+Make day 2 slower and more family friendly.
+```
+
+The app can read normal web pages. It skips PDF URLs in the web crawler. For PDF-based RAG, use the separate `groq-rag-starter/` project.
+
+Prefer official tourism, hotel, airline, train, museum and event pages when possible. Always verify prices, opening hours, visa rules, weather, safety information and booking availability before final travel decisions.
 
 ---
 
@@ -194,6 +233,28 @@ Creates the Streamlit chat screen:
 4. Send the message history to Ollama.
 5. Display and save the assistant reply.
 
+### `web_research.py`
+
+Provides a small crawler:
+
+1. Build a travel search query.
+2. Optionally search the web.
+3. Fetch a small number of web pages.
+4. Extract visible text from HTML.
+5. Pass the text to Qwen as source context.
+
+It uses Python standard-library modules so the code stays easy to explain.
+
+### `trip_planner.py`
+
+Builds the travel-planning prompt. The prompt asks Qwen to:
+
+- use web research as the main source;
+- create a day-by-day itinerary;
+- include food, transport and booking tips;
+- cite sources with `[WEB 1]`, `[WEB 2]`, etc.;
+- remind the user to verify live details.
+
 ---
 
 ## Classroom demo script
@@ -208,6 +269,19 @@ Creates the Streamlit chat screen:
 8. Download the transcript.
 
 This shows that the same model can act differently when the system prompt changes.
+
+## Trip planner classroom demo
+
+1. Open the **Trip planner** tab.
+2. Destination: `Singapore`.
+3. Dates or duration: `3 days in December`.
+4. Starting city: `Bengaluru`.
+5. Interests: `food, gardens, public transport, family friendly attractions`.
+6. Click **Research and plan trip**.
+7. Open **Web sources used** and show students the extracted text.
+8. Ask a follow-up: `Make this plan more budget friendly.`
+
+This shows that the model is still local Qwen, but the answer improves because the prompt contains fresh web context.
 
 ---
 
@@ -251,6 +325,15 @@ Lower **Temperature** in the sidebar.
 
 Increase **Max output tokens** in the sidebar.
 
+## Web search fails
+
+Try:
+
+- paste official travel URLs directly into **Optional websites to crawl**;
+- reduce **Pages to read**;
+- check your internet connection;
+- try again later if a site blocks automated requests.
+
 ---
 
 ## Run tests
@@ -259,17 +342,17 @@ Increase **Max output tokens** in the sidebar.
 pytest -q
 ```
 
-These tests do not call Ollama. They only check the local helper functions.
+These tests do not call Ollama or the live internet. They only check the local helper functions.
 
 ---
 
 ## How this differs from RAG
 
-| Local chatbot | RAG app |
-|---|---|
-| Uses only the model's existing knowledge and chat history | Retrieves chunks from your documents |
-| Good for general help | Good for answering from PDFs or private files |
-| Simpler code | More complete AI architecture |
-| No vector database | Uses embeddings and ChromaDB |
+| Local Qwen chatbot | Trip planner web context | RAG app |
+|---|---|---|
+| Uses chat history only | Reads current web pages and passes text to Qwen | Retrieves chunks from your documents |
+| Good for general help | Good for vacation planning and current travel research | Good for answering from PDFs or private files |
+| Simplest code | Adds web crawling and source context | Adds embeddings and ChromaDB |
+| No vector database | No vector database | Uses a vector database |
 
-Start with this chatbot first, then teach the RAG app after students understand chat messages and system prompts.
+Start with the basic chatbot, then teach the trip planner, then move to the RAG app after students understand chat messages, prompts and external context.
