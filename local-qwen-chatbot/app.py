@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 try:
@@ -10,12 +12,15 @@ except ImportError:
 
 from chatbot import ASSISTANT_MODES, build_chat_messages, export_markdown
 from ollama_client import OllamaChatError, OllamaSettings, chat
+from pdf_documents import pdf_chunks, save_uploaded_pdf
+from pdf_rag import answer_pdf_question
 from trip_planner import (
     TripRequest,
     build_search_query,
     build_trip_follow_up_messages,
     build_trip_messages,
 )
+from vector_store import RAGSettings, ingest_pdf, stored_chunk_count
 from web_research import research_web
 
 
@@ -23,10 +28,16 @@ load_dotenv()
 
 st.set_page_config(page_title="Local Qwen Assistant", page_icon="Q")
 st.title("Local Qwen Assistant")
-st.caption("A local Qwen chatbot with an internet-assisted vacation planner.")
+st.caption("A local Qwen chatbot with PDF RAG and internet-assisted trip planning.")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "pdf_rag_messages" not in st.session_state:
+    st.session_state.pdf_rag_messages = []
+if "pdf_sources" not in st.session_state:
+    st.session_state.pdf_sources = []
+if "last_pdf_path" not in st.session_state:
+    st.session_state.last_pdf_path = ""
 if "trip_messages" not in st.session_state:
     st.session_state.trip_messages = []
 if "trip_pages" not in st.session_state:
@@ -35,6 +46,7 @@ if "trip_warnings" not in st.session_state:
     st.session_state.trip_warnings = []
 
 settings = OllamaSettings.from_env()
+rag_settings = RAGSettings.from_env()
 
 with st.sidebar:
     st.header("Local model")
@@ -44,7 +56,7 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 1.0, 0.3, 0.05)
     num_predict = st.slider("Max output tokens", 100, 2000, 800, 100)
 
-    if st.button("Clear chat"):
+    if st.button("Clear assistant chat"):
         st.session_state.messages = []
         st.rerun()
 
@@ -62,7 +74,115 @@ active_settings = OllamaSettings(
     timeout_seconds=settings.timeout_seconds,
 )
 
-assistant_tab, travel_tab = st.tabs(["Assistant chat", "Trip planner"])
+pdf_tab, assistant_tab, travel_tab = st.tabs(["PDF RAG", "Assistant chat", "Trip planner"])
+
+with pdf_tab:
+    st.subheader("Ask questions about an uploaded PDF")
+    st.caption("PDF text is chunked, embedded locally, stored in ChromaDB, and answered by local Qwen.")
+
+    pdf_upload_dir = Path(rag_settings.upload_dir)
+
+    col_a, col_b, col_c = st.columns(3)
+    try:
+        col_a.metric("Stored PDF chunks", stored_chunk_count(rag_settings))
+    except Exception as exc:
+        col_a.warning(f"ChromaDB not ready: {exc}")
+    col_b.metric("Top K", rag_settings.top_k)
+    col_c.metric("Chunk size", rag_settings.chunk_size)
+
+    uploaded_pdf = st.file_uploader("Upload one PDF", type=["pdf"])
+    reset_vectors = st.checkbox("Replace existing PDF vectors", value=True)
+
+    if st.button("Ingest PDF into ChromaDB", disabled=uploaded_pdf is None):
+        try:
+            with st.spinner("Reading PDF, creating chunks and embeddings..."):
+                saved_path = save_uploaded_pdf(uploaded_pdf, pdf_upload_dir)
+                chunk_count = ingest_pdf(saved_path, settings=rag_settings, reset=reset_vectors)
+                st.session_state.last_pdf_path = saved_path.as_posix()
+                st.session_state.pdf_rag_messages = []
+                st.session_state.pdf_sources = []
+            st.success(f"Stored {chunk_count} chunks from {saved_path.name}.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    if st.session_state.last_pdf_path:
+        st.caption(f"Last ingested PDF: {st.session_state.last_pdf_path}")
+        with st.expander("Preview extracted chunks"):
+            try:
+                chunks = pdf_chunks(Path(st.session_state.last_pdf_path))
+                for chunk in chunks[:8]:
+                    st.markdown(
+                        f"**Page {chunk.page}, chunk {chunk.chunk}** "
+                        f"({chunk.characters} characters)"
+                    )
+                    st.write(chunk.text[:900])
+                if len(chunks) > 8:
+                    st.caption("Showing the first 8 chunks only.")
+            except Exception as exc:
+                st.warning(f"Could not preview chunks: {exc}")
+
+    top_k = st.slider("PDF chunks to retrieve", 1, 8, rag_settings.top_k)
+
+    if st.button("Clear PDF RAG chat"):
+        st.session_state.pdf_rag_messages = []
+        st.session_state.pdf_sources = []
+        st.rerun()
+
+    st.download_button(
+        "Download PDF RAG chat",
+        export_markdown(st.session_state.pdf_rag_messages),
+        file_name="pdf_rag_chat.md",
+        mime="text/markdown",
+        disabled=not st.session_state.pdf_rag_messages,
+    )
+
+    for message in st.session_state.pdf_rag_messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    if st.session_state.pdf_sources:
+        with st.expander("Retrieved PDF evidence"):
+            for index, source in enumerate(st.session_state.pdf_sources, start=1):
+                st.markdown(
+                    f"**[PDF {index}] {source['source']} - page {source['page']}, "
+                    f"chunk {source['chunk']}**"
+                )
+                st.caption(f"Cosine distance: {source['distance']:.3f}")
+                st.write(source["text"])
+
+    with st.form("pdf_question_form", clear_on_submit=True):
+        pdf_question = st.text_area(
+            "Ask a question about the uploaded PDF",
+            placeholder="Example: What are the main terms mentioned in this document?",
+            height=90,
+        )
+        asked_pdf_question = st.form_submit_button("Ask PDF")
+
+    if asked_pdf_question:
+        if not pdf_question.strip():
+            st.warning("Enter a PDF question first.")
+        else:
+            try:
+                with st.spinner("Retrieving PDF chunks and asking local Qwen..."):
+                    result = answer_pdf_question(
+                        pdf_question,
+                        active_settings,
+                        rag_settings=rag_settings,
+                        top_k=top_k,
+                        temperature=min(temperature, 0.2),
+                        num_predict=num_predict,
+                    )
+                st.session_state.pdf_rag_messages.append(
+                    {"role": "user", "content": pdf_question}
+                )
+                st.session_state.pdf_rag_messages.append(
+                    {"role": "assistant", "content": result.answer}
+                )
+                st.session_state.pdf_sources = result.sources
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
 
 with assistant_tab:
     for message in st.session_state.messages:

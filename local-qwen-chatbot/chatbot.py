@@ -27,6 +27,11 @@ ASSISTANT_MODES = {
         "You are a planning assistant. Break work into practical steps, identify "
         "risks, and suggest the next best action."
     ),
+    "PDF RAG helper": (
+        "You are a PDF question-answering assistant. Stay grounded in retrieved "
+        "document context, cite page numbers, and say when the PDF does not "
+        "contain enough information."
+    ),
 }
 
 

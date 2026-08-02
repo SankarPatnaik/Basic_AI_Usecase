@@ -2,10 +2,11 @@
 
 A simple local chatbot project for students. It runs on your computer using Ollama and the `qwen2.5:3b` model.
 
-It has two features:
+It has three features:
 
 1. A general local chatbot.
-2. An internet-assisted trip planner that reads travel web pages and asks Qwen to build a vacation plan.
+2. A PDF RAG assistant that uploads PDFs, chunks text, stores embeddings in ChromaDB, and answers with page numbers.
+3. An internet-assisted trip planner that reads travel web pages and asks Qwen to build a vacation plan.
 
 The basic chatbot flow is:
 
@@ -17,6 +18,24 @@ The trip planner flow is:
 
 ```text
 Trip details -> Search or pasted URLs -> Web page text -> Qwen prompt -> Itinerary
+```
+
+The PDF RAG flow is:
+
+```text
+PDF upload -> Page text -> Chunks -> Embeddings -> ChromaDB
+                                                   ^
+                                                   |
+Question -> Query embedding -> Similarity search --+
+                       |
+                       v
+             Retrieved PDF chunks with pages
+                       |
+                       v
+               qwen2.5:3b + RAG prompt
+                       |
+                       v
+             Answer with page citations
 ```
 
 Use this when you want a private local helper for planning, writing, studying, coding, or general task support.
@@ -31,6 +50,7 @@ Use this when you want a private local helper for planning, writing, studying, c
 4. How Streamlit can become a local web app.
 5. How a Python app calls Ollama through HTTP.
 6. How a chatbot can use live web page text as context.
+7. How a RAG pipeline stores and retrieves PDF chunks with ChromaDB.
 
 ---
 
@@ -41,6 +61,9 @@ app.py            Streamlit local chatbot UI
 cli.py            Terminal chatbot
 chatbot.py        System prompts, modes and transcript export
 ollama_client.py  Small HTTP client for Ollama
+pdf_documents.py  PDF validation, page extraction and chunking
+vector_store.py   ChromaDB storage and local embeddings
+pdf_rag.py        PDF RAG prompt and Qwen answer function
 web_research.py   Lightweight web search and page text extraction
 trip_planner.py   Travel-planning prompts and source context
 requirements.txt  Python packages
@@ -52,10 +75,13 @@ Read the files in this order:
 
 1. `chatbot.py`
 2. `ollama_client.py`
-3. `web_research.py`
-4. `trip_planner.py`
-5. `app.py`
-6. `cli.py`
+3. `pdf_documents.py`
+4. `vector_store.py`
+5. `pdf_rag.py`
+6. `web_research.py`
+7. `trip_planner.py`
+8. `app.py`
+9. `cli.py`
 
 ---
 
@@ -127,6 +153,14 @@ The default `.env` values are:
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:3b
 OLLAMA_TIMEOUT_SECONDS=120
+
+RAG_CHROMA_PATH=chroma_db
+RAG_COLLECTION_NAME=local_qwen_pdf_chunks
+RAG_UPLOAD_DIR=uploads/pdf
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+RAG_TOP_K=4
+RAG_CHUNK_SIZE=900
+RAG_CHUNK_OVERLAP=150
 ```
 
 ---
@@ -157,7 +191,11 @@ Open:
 http://127.0.0.1:8503
 ```
 
-The app runs locally on your machine. Open the **Assistant chat** tab for normal chat, or the **Trip planner** tab for vacation planning with web research.
+The app runs locally on your machine.
+
+- Open **PDF RAG** to ask questions about an uploaded PDF.
+- Open **Assistant chat** for normal local chat.
+- Open **Trip planner** for vacation planning with web research.
 
 ---
 
@@ -168,6 +206,32 @@ python cli.py
 ```
 
 Type `exit` to stop.
+
+---
+
+## Use PDF RAG
+
+1. Open the Streamlit app.
+2. Select the **PDF RAG** tab.
+3. Upload one PDF.
+4. Keep **Replace existing PDF vectors** enabled if you want one clean knowledge base.
+5. Click **Ingest PDF into ChromaDB**.
+6. Open **Preview extracted chunks** to show students how the PDF became chunks.
+7. Ask a question about the PDF.
+8. Open **Retrieved PDF evidence** to inspect the exact source chunks and page numbers.
+
+Example questions:
+
+```text
+Summarize the main points of this PDF.
+What does the document say about cancellation?
+List the important dates mentioned in the PDF.
+What are the responsibilities of the employee?
+```
+
+The answer should cite pages using labels such as `[PDF 1, page 3]`.
+
+Important limitation: `pypdf` extracts digital text. Scanned image PDFs need OCR before this app can read them.
 
 ---
 
@@ -188,7 +252,7 @@ Reduce the number of hotel changes.
 Make day 2 slower and more family friendly.
 ```
 
-The app can read normal web pages. It skips PDF URLs in the web crawler. For PDF-based RAG, use the separate `groq-rag-starter/` project.
+The app can read normal web pages. It skips PDF URLs in the web crawler. For PDF documents, use the **PDF RAG** tab.
 
 Prefer official tourism, hotel, airline, train, museum and event pages when possible. Always verify prices, opening hours, visa rules, weather, safety information and booking availability before final travel decisions.
 
@@ -232,6 +296,34 @@ Creates the Streamlit chat screen:
 3. Read the new user message with `st.chat_input`.
 4. Send the message history to Ollama.
 5. Display and save the assistant reply.
+
+### `pdf_documents.py`
+
+Turns a PDF into teachable chunks:
+
+1. Validate that the upload is a PDF.
+2. Save it under `uploads/pdf/`.
+3. Extract text page by page with `pypdf`.
+4. Split each page into overlapping chunks.
+5. Preserve metadata: file name, page number, chunk number and character count.
+
+### `vector_store.py`
+
+Stores and searches chunks:
+
+1. Convert chunks into local embeddings with Sentence Transformers.
+2. Store text, vectors and metadata in ChromaDB.
+3. Convert the user's question into a query embedding.
+4. Return the most similar chunks with page numbers.
+
+### `pdf_rag.py`
+
+Builds the final RAG prompt for Qwen:
+
+1. Label retrieved chunks as `[PDF 1, page 3, chunk 0]`.
+2. Tell Qwen to answer only from the retrieved context.
+3. Tell Qwen to say when the PDF does not contain the answer.
+4. Return the answer plus the source chunks for inspection.
 
 ### `web_research.py`
 
@@ -283,6 +375,18 @@ This shows that the same model can act differently when the system prompt change
 
 This shows that the model is still local Qwen, but the answer improves because the prompt contains fresh web context.
 
+## PDF RAG classroom demo
+
+1. Open the **PDF RAG** tab.
+2. Upload a short digital-text PDF.
+3. Click **Ingest PDF into ChromaDB**.
+4. Open **Preview extracted chunks** and explain chunk size and overlap.
+5. Ask: `Summarize this PDF in five bullet points.`
+6. Open **Retrieved PDF evidence** and show the page numbers.
+7. Ask a question whose answer is not present in the PDF.
+
+This shows why RAG is more grounded than plain chat: Qwen receives retrieved evidence instead of relying only on model memory.
+
 ---
 
 ## Troubleshooting
@@ -325,6 +429,20 @@ Lower **Temperature** in the sidebar.
 
 Increase **Max output tokens** in the sidebar.
 
+## PDF upload works but no text is extracted
+
+The PDF may be scanned or image-only. Use OCR first, then upload the OCR version.
+
+## ChromaDB or OpenTelemetry import error
+
+Install the pinned dependencies from `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+This project pins matching OpenTelemetry packages because ChromaDB imports them during startup.
+
 ## Web search fails
 
 Try:
@@ -342,17 +460,16 @@ Try:
 pytest -q
 ```
 
-These tests do not call Ollama or the live internet. They only check the local helper functions.
+These tests do not call Ollama, ChromaDB embedding generation or the live internet. They only check local helper functions and prompt construction.
 
 ---
 
-## How this differs from RAG
+## How the three modes differ
 
-| Local Qwen chatbot | Trip planner web context | RAG app |
-|---|---|---|
-| Uses chat history only | Reads current web pages and passes text to Qwen | Retrieves chunks from your documents |
-| Good for general help | Good for vacation planning and current travel research | Good for answering from PDFs or private files |
-| Simplest code | Adds web crawling and source context | Adds embeddings and ChromaDB |
-| No vector database | No vector database | Uses a vector database |
+| Mode | External context | Storage | Best use |
+|---|---|---|---|
+| Assistant chat | No | Chat history only | General help, writing, coding and planning |
+| PDF RAG | Uploaded PDF chunks | ChromaDB vector database | Answering from documents with page numbers |
+| Trip planner | Live web page text | Streamlit session only | Current travel research and itinerary planning |
 
-Start with the basic chatbot, then teach the trip planner, then move to the RAG app after students understand chat messages, prompts and external context.
+Start with the basic chatbot, then teach PDF RAG, then show the trip planner as another example of adding external context.

@@ -4,3 +4,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 local_qwen_chat.md
+qwen_trip_plan.md
+chroma_db/*
+uploads/*
